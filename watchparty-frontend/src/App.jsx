@@ -18,7 +18,7 @@ const WatchParty = () => {
   const ignoreNextUpdate = useRef(false);
 
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:3001');
+    const ws = new WebSocket('wss://watchparty-c6uz.onrender.com/');
     
     ws.onopen = () => {
       console.log('Connected to server');
