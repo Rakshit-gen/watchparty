@@ -21,139 +21,124 @@ const WatchParty = () => {
   const reconnectTimeout = useRef(null);
 
   useEffect(() => {
-    const connectWebSocket = () => {
-      const ws = new WebSocket('wss://watchparty-c6uz.onrender.com');
-      
-      ws.onopen = () => {
-        console.log('Connected to server');
-        setIsConnecting(false);
-        if (reconnectTimeout.current) {
-          clearTimeout(reconnectTimeout.current);
-        }
-      };
-
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        
-        switch(data.type) {
-          case 'sync':
-            setCurrentVideoId(data.videoId);
-            setIsPlaying(data.isPlaying);
-            setUserCount(data.userCount);
-            if (playerRef.current && playerRef.current.seekTo) {
-              ignoreNextUpdate.current = true;
-              playerRef.current.seekTo(data.currentTime);
-              if (data.isPlaying) {
-                playerRef.current.playVideo();
-              } else {
-                playerRef.current.pauseVideo();
-              }
-            }
-            break;
-            
-          case 'play':
-            ignoreNextUpdate.current = true;
-            setIsPlaying(true);
-            if (playerRef.current && playerRef.current.playVideo) {
-              playerRef.current.playVideo();
-            }
-            break;
-            
-          case 'pause':
-            ignoreNextUpdate.current = true;
-            setIsPlaying(false);
-            if (playerRef.current && playerRef.current.pauseVideo) {
-              playerRef.current.pauseVideo();
-            }
-            break;
-            
-          case 'seek':
-            ignoreNextUpdate.current = true;
-            if (playerRef.current && playerRef.current.seekTo) {
-              playerRef.current.seekTo(data.time);
-            }
-            break;
-            
-          case 'changeVideo':
-            ignoreNextUpdate.current = true;
-            setCurrentVideoId(data.videoId);
-            setIsPlaying(false);
-            if (playerRef.current && playerRef.current.loadVideoById) {
-              playerRef.current.loadVideoById(data.videoId);
-            }
-            break;
-            
-          case 'userCount':
-            setUserCount(data.count);
-            break;
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setIsConnecting(true);
-      };
-
-      ws.onclose = () => {
-        console.log('Disconnected, attempting to reconnect...');
-        setIsConnecting(true);
-        reconnectTimeout.current = setTimeout(() => {
-          connectWebSocket();
-        }, 3000);
-      };
-
-      setSocket(ws);
-      return ws;
+    const ws = new WebSocket('ws://localhost:3001');
+    
+    ws.onopen = () => {
+      console.log('Connected to server');
     };
 
-    const ws = connectWebSocket();
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      
+      switch(data.type) {
+        case 'sync':
+          setCurrentVideoId(data.videoId);
+          setIsPlaying(data.isPlaying);
+          setUserCount(data.userCount);
+          if (playerRef.current && playerRef.current.seekTo) {
+            ignoreNextUpdate.current = true;
+            playerRef.current.seekTo(data.currentTime);
+            if (data.isPlaying) {
+              playerRef.current.playVideo();
+            } else {
+              playerRef.current.pauseVideo();
+            }
+          }
+          break;
+          
+        case 'play':
+          ignoreNextUpdate.current = true;
+          setIsPlaying(true);
+          if (playerRef.current && playerRef.current.playVideo) {
+            playerRef.current.playVideo();
+          }
+          break;
+          
+        case 'pause':
+          ignoreNextUpdate.current = true;
+          setIsPlaying(false);
+          if (playerRef.current && playerRef.current.pauseVideo) {
+            playerRef.current.pauseVideo();
+          }
+          break;
+          
+        case 'seek':
+          ignoreNextUpdate.current = true;
+          if (playerRef.current && playerRef.current.seekTo) {
+            playerRef.current.seekTo(data.time);
+          }
+          break;
+          
+        case 'changeVideo':
+          ignoreNextUpdate.current = true;
+          setCurrentVideoId(data.videoId);
+          setIsPlaying(false);
+          if (playerRef.current && playerRef.current.loadVideoById) {
+            playerRef.current.loadVideoById(data.videoId);
+          }
+          break;
+          
+        case 'userCount':
+          setUserCount(data.count);
+          break;
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    setSocket(ws);
 
     return () => {
-      if (reconnectTimeout.current) {
-        clearTimeout(reconnectTimeout.current);
-      }
       ws.close();
     };
   }, []);
 
   useEffect(() => {
+    const initPlayer = () => {
+      if (window.YT && window.YT.Player) {
+        if (!playerRef.current || !playerRef.current.getPlayerState) {
+          playerRef.current = new window.YT.Player('youtube-player', {
+            videoId: currentVideoId,
+            playerVars: {
+              controls: 0,
+              modestbranding: 1,
+              rel: 0
+            },
+            events: {
+              onReady: (event) => {
+                console.log('Player ready');
+                playerReady.current = true;
+              },
+              onStateChange: (event) => {
+                if (ignoreNextUpdate.current) {
+                  ignoreNextUpdate.current = false;
+                  return;
+                }
+                
+                if (event.data === window.YT.PlayerState.PLAYING && socket) {
+                  socket.send(JSON.stringify({ type: 'play' }));
+                } else if (event.data === window.YT.PlayerState.PAUSED && socket) {
+                  socket.send(JSON.stringify({ type: 'pause' }));
+                }
+              }
+            }
+          });
+        }
+      }
+    };
+
     if (!window.YT) {
       const tag = document.createElement('script');
       tag.src = 'https://www.youtube.com/iframe_api';
       const firstScriptTag = document.getElementsByTagName('script')[0];
       firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+      
+      window.onYouTubeIframeAPIReady = initPlayer;
+    } else {
+      initPlayer();
     }
-
-    window.onYouTubeIframeAPIReady = () => {
-      if (!playerRef.current || !playerRef.current.loadVideoById) {
-        playerRef.current = new window.YT.Player('youtube-player', {
-          videoId: currentVideoId,
-          playerVars: {
-            controls: 0,
-            modestbranding: 1,
-            rel: 0
-          },
-          events: {
-            onReady: (event) => {
-              console.log('Player ready');
-              playerReady.current = true;
-            },
-            onStateChange: (event) => {
-              if (ignoreNextUpdate.current) {
-                ignoreNextUpdate.current = false;
-                return;
-              }
-              
-              if (event.data === window.YT.PlayerState.PLAYING && socket) {
-                socket.send(JSON.stringify({ type: 'play' }));
-              } else if (event.data === window.YT.PlayerState.PAUSED && socket) {
-                socket.send(JSON.stringify({ type: 'pause' }));
-              }
-            }
-          }
-        });
-      }
-    };
 
     if (window.YT && window.YT.Player && playerRef.current && playerRef.current.loadVideoById && playerReady.current) {
       playerRef.current.loadVideoById(currentVideoId);
