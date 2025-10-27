@@ -14,81 +14,104 @@ const WatchParty = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [userCount, setUserCount] = useState(1);
   const [inputUrl, setInputUrl] = useState('');
+  const [isConnecting, setIsConnecting] = useState(true);
   const playerRef = useRef(null);
   const ignoreNextUpdate = useRef(false);
   const playerReady = useRef(false);
+  const reconnectTimeout = useRef(null);
 
   useEffect(() => {
-    const ws = new WebSocket('wss://watchparty-c6uz.onrender.com');
-    
-    ws.onopen = () => {
-      console.log('Connected to server');
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    const connectWebSocket = () => {
+      const ws = new WebSocket('wss://watchparty-c6uz.onrender.com');
       
-      switch(data.type) {
-        case 'sync':
-          setCurrentVideoId(data.videoId);
-          setIsPlaying(data.isPlaying);
-          setUserCount(data.userCount);
-          if (playerRef.current && playerRef.current.seekTo) {
+      ws.onopen = () => {
+        console.log('Connected to server');
+        setIsConnecting(false);
+        if (reconnectTimeout.current) {
+          clearTimeout(reconnectTimeout.current);
+        }
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        switch(data.type) {
+          case 'sync':
+            setCurrentVideoId(data.videoId);
+            setIsPlaying(data.isPlaying);
+            setUserCount(data.userCount);
+            if (playerRef.current && playerRef.current.seekTo) {
+              ignoreNextUpdate.current = true;
+              playerRef.current.seekTo(data.currentTime);
+              if (data.isPlaying) {
+                playerRef.current.playVideo();
+              } else {
+                playerRef.current.pauseVideo();
+              }
+            }
+            break;
+            
+          case 'play':
             ignoreNextUpdate.current = true;
-            playerRef.current.seekTo(data.currentTime);
-            if (data.isPlaying) {
+            setIsPlaying(true);
+            if (playerRef.current && playerRef.current.playVideo) {
               playerRef.current.playVideo();
-            } else {
+            }
+            break;
+            
+          case 'pause':
+            ignoreNextUpdate.current = true;
+            setIsPlaying(false);
+            if (playerRef.current && playerRef.current.pauseVideo) {
               playerRef.current.pauseVideo();
             }
-          }
-          break;
-          
-        case 'play':
-          ignoreNextUpdate.current = true;
-          setIsPlaying(true);
-          if (playerRef.current && playerRef.current.playVideo) {
-            playerRef.current.playVideo();
-          }
-          break;
-          
-        case 'pause':
-          ignoreNextUpdate.current = true;
-          setIsPlaying(false);
-          if (playerRef.current && playerRef.current.pauseVideo) {
-            playerRef.current.pauseVideo();
-          }
-          break;
-          
-        case 'seek':
-          ignoreNextUpdate.current = true;
-          if (playerRef.current && playerRef.current.seekTo) {
-            playerRef.current.seekTo(data.time);
-          }
-          break;
-          
-        case 'changeVideo':
-          ignoreNextUpdate.current = true;
-          setCurrentVideoId(data.videoId);
-          setIsPlaying(false);
-          if (playerRef.current && playerRef.current.loadVideoById) {
-            playerRef.current.loadVideoById(data.videoId);
-          }
-          break;
-          
-        case 'userCount':
-          setUserCount(data.count);
-          break;
-      }
+            break;
+            
+          case 'seek':
+            ignoreNextUpdate.current = true;
+            if (playerRef.current && playerRef.current.seekTo) {
+              playerRef.current.seekTo(data.time);
+            }
+            break;
+            
+          case 'changeVideo':
+            ignoreNextUpdate.current = true;
+            setCurrentVideoId(data.videoId);
+            setIsPlaying(false);
+            if (playerRef.current && playerRef.current.loadVideoById) {
+              playerRef.current.loadVideoById(data.videoId);
+            }
+            break;
+            
+          case 'userCount':
+            setUserCount(data.count);
+            break;
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setIsConnecting(true);
+      };
+
+      ws.onclose = () => {
+        console.log('Disconnected, attempting to reconnect...');
+        setIsConnecting(true);
+        reconnectTimeout.current = setTimeout(() => {
+          connectWebSocket();
+        }, 3000);
+      };
+
+      setSocket(ws);
+      return ws;
     };
 
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    setSocket(ws);
+    const ws = connectWebSocket();
 
     return () => {
+      if (reconnectTimeout.current) {
+        clearTimeout(reconnectTimeout.current);
+      }
       ws.close();
     };
   }, []);
@@ -165,7 +188,7 @@ const WatchParty = () => {
     }
     
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      alert('Not connected to server. Please wait...');
+      alert('Server is waking up, please try again in a few seconds...');
       return;
     }
     
@@ -181,6 +204,9 @@ const WatchParty = () => {
           <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-full">
             <Users size={20} />
             <span className="font-semibold">{userCount} watching</span>
+            {isConnecting && (
+              <span className="ml-2 text-xs text-yellow-300">(Connecting...)</span>
+            )}
           </div>
         </div>
 
