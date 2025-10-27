@@ -1,7 +1,10 @@
 const WebSocket = require('ws');
 const http = require('http');
 
-const server = http.createServer();
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Watch Party WebSocket Server is running');
+});
 
 const wss = new WebSocket.Server({ server });
 
