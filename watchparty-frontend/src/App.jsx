@@ -16,6 +16,7 @@ const WatchParty = () => {
   const [inputUrl, setInputUrl] = useState('');
   const playerRef = useRef(null);
   const ignoreNextUpdate = useRef(false);
+  const playerReady = useRef(false);
 
   useEffect(() => {
     const ws = new WebSocket('wss://watchparty-c6uz.onrender.com');
@@ -32,7 +33,7 @@ const WatchParty = () => {
           setCurrentVideoId(data.videoId);
           setIsPlaying(data.isPlaying);
           setUserCount(data.userCount);
-          if (playerRef.current) {
+          if (playerRef.current && playerRef.current.seekTo) {
             ignoreNextUpdate.current = true;
             playerRef.current.seekTo(data.currentTime);
             if (data.isPlaying) {
@@ -46,18 +47,24 @@ const WatchParty = () => {
         case 'play':
           ignoreNextUpdate.current = true;
           setIsPlaying(true);
-          playerRef.current?.playVideo();
+          if (playerRef.current && playerRef.current.playVideo) {
+            playerRef.current.playVideo();
+          }
           break;
           
         case 'pause':
           ignoreNextUpdate.current = true;
           setIsPlaying(false);
-          playerRef.current?.pauseVideo();
+          if (playerRef.current && playerRef.current.pauseVideo) {
+            playerRef.current.pauseVideo();
+          }
           break;
           
         case 'seek':
           ignoreNextUpdate.current = true;
-          playerRef.current?.seekTo(data.time);
+          if (playerRef.current && playerRef.current.seekTo) {
+            playerRef.current.seekTo(data.time);
+          }
           break;
           
         case 'changeVideo':
@@ -106,6 +113,7 @@ const WatchParty = () => {
           events: {
             onReady: (event) => {
               console.log('Player ready');
+              playerReady.current = true;
             },
             onStateChange: (event) => {
               if (ignoreNextUpdate.current) {
@@ -124,7 +132,7 @@ const WatchParty = () => {
       }
     };
 
-    if (window.YT && window.YT.Player && playerRef.current && playerRef.current.loadVideoById) {
+    if (window.YT && window.YT.Player && playerRef.current && playerRef.current.loadVideoById && playerReady.current) {
       playerRef.current.loadVideoById(currentVideoId);
     }
   }, [currentVideoId, socket]);
