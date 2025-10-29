@@ -1,163 +1,134 @@
-const WebSocket = require('ws');
-const http = require('http');
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Watch Party WebSocket Server is running');
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    methods: ["GET", "POST"]
+  }
 });
 
-const wss = new WebSocket.Server({ server });
+app.use(cors());
+app.use(express.json());
 
-const sessionState = {
-  videoId: 'dQw4w9WgXcQ',
+// Global session state
+let sessionState = {
+  videoUrl: '',
+  videoId: '',
   isPlaying: false,
   currentTime: 0,
-  lastUpdateTime: Date.now()
+  lastUpdateTimestamp: Date.now(),
+  connectedUsers: 0
 };
 
-const clients = new Set();
-
-const broadcast = (data, sender) => {
-  const message = JSON.stringify(data);
-  clients.forEach(client => {
-    if (client !== sender && client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
-  });
-};
-
-const broadcastToAll = (data) => {
-  const message = JSON.stringify(data);
-  clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
-  });
-};
-
-const updateCurrentTime = () => {
-  if (sessionState.isPlaying) {
-    const now = Date.now();
-    const elapsed = (now - sessionState.lastUpdateTime) / 1000;
-    sessionState.currentTime += elapsed;
-    sessionState.lastUpdateTime = now;
+// Extract YouTube video ID from URL
+function extractVideoId(url) {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /^([a-zA-Z0-9_-]{11})$/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
   }
-};
+  return null;
+}
 
-wss.on('connection', (ws) => {
-  console.log('New client connected');
-  clients.add(ws);
+// Calculate current time based on last update
+function getCurrentPlaybackTime() {
+  if (!sessionState.isPlaying) {
+    return sessionState.currentTime;
+  }
+  const elapsed = (Date.now() - sessionState.lastUpdateTimestamp) / 1000;
+  return sessionState.currentTime + elapsed;
+}
 
-  updateCurrentTime();
+io.on('connection', (socket) => {
+  sessionState.connectedUsers++;
+  console.log(`User connected. Total users: ${sessionState.connectedUsers}`);
 
-  ws.send(JSON.stringify({
-    type: 'sync',
-    videoId: sessionState.videoId,
-    isPlaying: sessionState.isPlaying,
-    currentTime: sessionState.currentTime,
-    userCount: clients.size
-  }));
-
-  broadcastToAll({
-    type: 'userCount',
-    count: clients.size
+  // Send current state to new user
+  socket.emit('initial-state', {
+    ...sessionState,
+    currentTime: getCurrentPlaybackTime()
   });
 
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message);
+  // Broadcast user count to all clients
+  io.emit('user-count', sessionState.connectedUsers);
+
+  // Handle video URL change
+  socket.on('change-video', (url) => {
+    const videoId = extractVideoId(url);
+    if (videoId) {
+      sessionState.videoUrl = url;
+      sessionState.videoId = videoId;
+      sessionState.isPlaying = false;
+      sessionState.currentTime = 0;
+      sessionState.lastUpdateTimestamp = Date.now();
       
-      switch(data.type) {
-        case 'play':
-          updateCurrentTime();
-          sessionState.isPlaying = true;
-          sessionState.lastUpdateTime = Date.now();
-          
-          broadcastToAll({
-            type: 'play'
-          });
-          console.log('Play event broadcasted');
-          break;
-
-        case 'pause':
-          updateCurrentTime();
-          sessionState.isPlaying = false;
-          
-          broadcastToAll({
-            type: 'pause'
-          });
-          console.log('Pause event broadcasted');
-          break;
-
-        case 'seek':
-          sessionState.currentTime = data.time;
-          sessionState.lastUpdateTime = Date.now();
-          
-          broadcastToAll({
-            type: 'seek',
-            time: data.time
-          });
-          console.log(`Seek event broadcasted: ${data.time}s`);
-          break;
-
-        case 'changeVideo':
-          sessionState.videoId = data.videoId;
-          sessionState.isPlaying = false;
-          sessionState.currentTime = 0;
-          sessionState.lastUpdateTime = Date.now();
-          
-          broadcastToAll({
-            type: 'changeVideo',
-            videoId: data.videoId
-          });
-          console.log(`Video changed: ${data.videoId}`);
-          break;
-
-        default:
-          console.log('Unknown message type:', data.type);
-      }
-    } catch (error) {
-      console.error('Error processing message:', error);
+      // Broadcast to all clients including sender
+      io.emit('video-changed', {
+        videoUrl: url,
+        videoId: videoId,
+        isPlaying: false,
+        currentTime: 0
+      });
     }
   });
 
-  ws.on('close', () => {
-    console.log('Client disconnected');
-    clients.delete(ws);
+  // Handle play event
+  socket.on('play', (currentTime) => {
+    sessionState.isPlaying = true;
+    sessionState.currentTime = currentTime;
+    sessionState.lastUpdateTimestamp = Date.now();
     
-    broadcastToAll({
-      type: 'userCount',
-      count: clients.size
+    // Broadcast to all other clients
+    socket.broadcast.emit('play', currentTime);
+  });
+
+  // Handle pause event
+  socket.on('pause', (currentTime) => {
+    sessionState.isPlaying = false;
+    sessionState.currentTime = currentTime;
+    sessionState.lastUpdateTimestamp = Date.now();
+    
+    // Broadcast to all other clients
+    socket.broadcast.emit('pause', currentTime);
+  });
+
+  // Handle seek event
+  socket.on('seek', (currentTime) => {
+    sessionState.currentTime = currentTime;
+    sessionState.lastUpdateTimestamp = Date.now();
+    
+    // Broadcast to all other clients
+    socket.broadcast.emit('seek', currentTime);
+  });
+
+  // Handle sync request (for drift correction)
+  socket.on('request-sync', () => {
+    socket.emit('sync-state', {
+      isPlaying: sessionState.isPlaying,
+      currentTime: getCurrentPlaybackTime(),
+      timestamp: Date.now()
     });
   });
 
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
+  // Handle disconnect
+  socket.on('disconnect', () => {
+    sessionState.connectedUsers--;
+    console.log(`User disconnected. Total users: ${sessionState.connectedUsers}`);
+    io.emit('user-count', sessionState.connectedUsers);
   });
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`WebSocket server is running on port ${PORT}`);
-  console.log(`Initial video: ${sessionState.videoId}`);
-});
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, closing server...');
-  wss.close(() => {
-    server.close(() => {
-      console.log('Server closed');
-      process.exit(0);
-    });
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, closing server...');
-  wss.close(() => {
-    server.close(() => {
-      console.log('Server closed');
-      process.exit(0);
-    });
-  });
+httpServer.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
