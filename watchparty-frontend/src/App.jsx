@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import YouTube from 'react-youtube';
 import { Play, Pause, SkipForward, SkipBack, Users, Video } from 'lucide-react';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+const SOCKET_URL = 'https://watchparty-c6uz.onrender.com';
 
 function App() {
   const [socket, setSocket] = useState(null);
